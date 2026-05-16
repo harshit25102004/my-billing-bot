@@ -1,9 +1,11 @@
-import logging
+ import logging
 import os
 import sqlite3
+import asyncio
+import sys
 from datetime import datetime
 from fpdf import FPDF
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -12,13 +14,13 @@ from telegram.ext import (
     ConversationHandler, 
     ContextTypes
 )
-from telegram.request import HTTPXRequest
 
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # Conversation States for Billing (0 to 13)
-CHOOSING_TYPE, BANK_DETAILS, SHOW_CUST_GST, CUST_NAME, CUST_PHONE, CUST_GSTIN, CUST_ADDR, ITEM_NAME, ITEM_HSN, ITEM_QTY, ITEM_UNIT, ITEM_RATE, ITEM_GST, ADDING_MORE = range(14)
+CHOOSING_TYPE, BANK_DETAILS, SHOW_CUST_GST, CUST_NAME, CUST_PHONE, CUST_GSTIN, CUST_ADDR, \
+ITEM_NAME, ITEM_HSN, ITEM_QTY, ITEM_UNIT, ITEM_RATE, ITEM_GST, ADDING_MORE = range(14)
 
 # Conversation States for Bank Editing (14 to 17)
 EDIT_BANK_NAME, EDIT_ACC_HOLDER, EDIT_ACC_NO, EDIT_IFSC = range(14, 18)
@@ -29,14 +31,6 @@ SELLER_ADDR = "B 1330 nag mandir road shastri nagar new delhi 110052"
 SELLER_PHONE = "7065231699"
 SELLER_STATE = "07-Delhi"
 SELLER_GSTIN = "07DJWPG1456G1ZX"
-
-# Persistent Main Menu Keyboard (Jo hamesha visible rahega)
-def get_main_menu_keyboard():
-    return ReplyKeyboardMarkup(
-        [['➕ Create Bill', '🏦 Edit Bank'], ['📊 View History', '🛑 Stop Process']],
-        resize_keyboard=True,
-        one_time_keyboard=False  # Isse menu hamesha screen par bana rahega
-    )
 
 def init_db():
     conn = sqlite3.connect('billing_history.db')
@@ -95,33 +89,15 @@ class PDF(FPDF):
         self.line(10, 20, 200, 20)
         self.ln(5)
 
-# ==================== CONTROLLER / MAIN HANDLERS ====================
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "🧾 *Kridha Essentials Control Panel*\n\nNeeche diye gaye options me se select karein:",
-        parse_mode="Markdown",
-        reply_markup=get_main_menu_keyboard()
-    )
-
-async def stop_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text(
-        "🛑 Sabhi chal rahi activities ko rok kar reset kar diya gaya hai. Aap naya kaam shuru kar sakte hain.",
-        reply_markup=get_main_menu_keyboard()
-    )
-    return ConversationHandler.END
-
 # ==================== BILLING CONVERSATION FLOW ====================
 
-async def start_billing_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data['items'] = []
     
     reply_keyboard = [['GST Invoice', 'Estimate Bill']]
     await update.message.reply_text(
-        "🧾 Kaisa bill banana chahte hain?",
+        "🧾 Kridha Essentials Billing Bot mein swagat hai!\nKaisa bill banana hai?",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
     return CHOOSING_TYPE
@@ -141,12 +117,12 @@ async def bank_details_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         context.user_data['show_cust_gst'] = 'No'
         context.user_data['c_gstin'] = "N/A"
-        await update.message.reply_text("👤 Customer Name:")
+        await update.message.reply_text("👤 Customer Name:", reply_markup=ReplyKeyboardRemove())
         return CUST_NAME
 
 async def show_cust_gst_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['show_cust_gst'] = update.message.text
-    await update.message.reply_text("👤 Customer Name:")
+    await update.message.reply_text("👤 Customer Name:", reply_markup=ReplyKeyboardRemove())
     return CUST_NAME
 
 async def cust_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -170,12 +146,12 @@ async def cust_gstin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cust_addr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['c_addr'] = update.message.text
-    await update.message.reply_text("📦 Item Description / Name:")
+    await update.message.reply_text("📦 Chaliye Items add karte hain.\nItem Description / Name:")
     return ITEM_NAME
 
 async def item_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_item'] = {'name': update.message.text}
-    await update.message.reply_text(f"🔢 '{update.message.text}' ka HSN Code (Nahi hai to '-' likhein):")
+    await update.message.reply_text(f"🔢 '{update.message.text}' ka HSN Code (Agar nahi hai to '-' likhein):")
     return ITEM_HSN
 
 async def item_hsn(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,24 +166,24 @@ async def item_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📐 Unit select karein:", reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True))
         return ITEM_UNIT
     except ValueError:
-        await update.message.reply_text("❌ Sahi number dalein. Quantity:")
+        await update.message.reply_text("❌ Kripya sahi number dalein. Quantity:")
         return ITEM_QTY
 
 async def item_unit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_item']['unit'] = update.message.text
-    await update.message.reply_text("💰 Price / Rate (Per Unit):")
+    await update.message.reply_text("💰 Price / Rate (Per Unit):", reply_markup=ReplyKeyboardRemove())
     return ITEM_RATE
 
 async def item_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data['current_item']['rate'] = float(update.message.text)
         if context.user_data['type'] == 'GST Invoice':
-            await update.message.reply_text("📈 GST % (Kripya sirf number dalein jaise 5, 12, 18):")
+            await update.message.reply_text("📈 GST % (Kripya sirf number likhein jaise 5, 12, 18):")
             return ITEM_GST
-        context.user_data['current_item']['gst'] = 0.0
+context.user_data['current_item']['gst'] = 0.0
         return await save_item(update, context)
     except ValueError:
-        await update.message.reply_text("❌ Sahi price dalein. Price:")
+        await update.message.reply_text("❌ Kripya sahi price dalein. Price:")
         return ITEM_RATE
 
 async def item_gst(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -215,7 +191,7 @@ async def item_gst(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['current_item']['gst'] = float(update.message.text)
         return await save_item(update, context)
     except ValueError:
-        await update.message.reply_text("❌ Sahi GST % dalein. GST %:")
+        await update.message.reply_text("❌ Kripya sahi GST % dalein. GST %:")
         return ITEM_GST
 
 async def save_item(update, context):
@@ -228,7 +204,7 @@ async def save_item(update, context):
     return ADDING_MORE
 
 async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Generating layout cleanly, please wait...")
+    await update.message.reply_text("⏳ Generating PDF, please wait...", reply_markup=ReplyKeyboardRemove())
     user = context.user_data
     invoice_no = get_next_invoice_no()
     current_date = datetime.now().strftime('%d-%m-%Y')
@@ -250,32 +226,41 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     x_grid, y_grid = pdf.get_x(), pdf.get_y()
     
-    # --- PERFECT GRID FIX WITHOUT OVERLAPPING ---
-    # Left Block: Bill To (Width 100)
-    pdf.rect(x_grid, y_grid, 100, 32)
+    # --- FIXED 3-COLUMN GRID BOXES (NO OVERLAPPING) ---
+    # Column 1: Bill To (Width 65)
+    pdf.rect(x_grid, y_grid, 65, 32)
     pdf.set_xy(x_grid+2, y_grid+2)
     pdf.set_font("Arial", 'B', 9)
-    pdf.cell(96, 4, "Bill To:", 0, 1)
-    pdf.cell(96, 4, user['c_name'], 0, 1)
+    pdf.cell(61, 4, "Bill To:", 0, 1)
     pdf.set_font("Arial", '', 8.5)
-    pdf.cell(96, 4, f"Contact: {user['c_phone']}", 0, 1)
+    pdf.cell(61, 4.5, f"Name: {user['c_name']}", 0, 1)
+    pdf.cell(61, 4.5, f"Contact: {user['c_phone']}", 0, 1)
     pdf.set_xy(x_grid+2, pdf.get_y())
-    pdf.multi_cell(96, 4, f"Address: {user['c_addr']}")
+    pdf.multi_cell(61, 4, f"Address: {user['c_addr']}")
     
-    # Right Block: Invoice + GSTIN details Combined (Width 90)
-    pdf.set_xy(x_grid+100, y_grid)
-    pdf.rect(x_grid+100, y_grid, 90, 32)
-    pdf.set_xy(x_grid+102, y_grid+2)
+    # Column 2: Invoice Details (Width 65)
+    pdf.set_xy(x_grid+65, y_grid)
+    pdf.rect(x_grid+65, y_grid, 65, 32)
+    pdf.set_xy(x_grid+67, y_grid+2)
     pdf.set_font("Arial", 'B', 9)
-    pdf.cell(86, 4, "Invoice & Statutory Details:", 0, 1)
-    pdf.set_font("Arial", '', 9)
-    pdf.cell(86, 4.5, f"Invoice No: {invoice_no}", 0, 1)
-    pdf.cell(86, 4.5, f"Date: {current_date}", 0, 1)
+    pdf.cell(61, 4, "Invoice Details:", 0, 1)
+    pdf.set_font("Arial", '', 8.5)
+    pdf.cell(61, 4.5, f"Invoice No: {invoice_no}", 0, 1)
+    pdf.cell(61, 4.5, f"Date: {current_date}", 0, 1)
+    
+    # Column 3: Customer GSTIN (Width 60)
+    pdf.set_xy(x_grid+130, y_grid)
+    pdf.rect(x_grid+130, y_grid, 60, 32)
+    pdf.set_xy(x_grid+132, y_grid+2)
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(56, 4, "Customer GSTIN:", 0, 1)
+    pdf.set_font("Arial", '', 8.5)
     if user['type'] == 'GST Invoice' and user['show_cust_gst'] == 'Yes':
-        pdf.set_font("Arial", 'B', 8.5)
-        pdf.cell(86, 4.5, f"Customer GSTIN: {user['c_gstin']}", 0, 1)
+        pdf.cell(56, 4.5, user['c_gstin'], 0, 1)
+    else:
+        pdf.cell(56, 4.5, "N/A", 0, 1)
         
-    pdf.set_xy(x_grid, y_grid+37)
+    pdf.set_xy(10, y_grid+37)
 
     # Main Items Table
     pdf.set_fill_color(242, 242, 242)
@@ -298,7 +283,6 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     grand_total = 0.0
     sub_total = 0.0
     tax_rows = []
-    
     for idx, itm in enumerate(user['items'], 1):
         base = itm['qty'] * itm['rate']
         tax = base * (itm['gst'] / 100.0) if is_gst else 0.0
@@ -316,7 +300,7 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_gst:
             pdf.cell(20, 7, f"{tax:.2f}", 1, 0, 'C')
             pdf.cell(25, 7, f"{total:.2f}", 1, 1, 'C')
-            if base > 0:
+            if base > 0:    
                 tax_rows.append((itm['hsn'], base, tax/2.0, tax/2.0, tax))
         else:
             pdf.cell(45, 7, f"{total:.2f}", 1, 1, 'C')
@@ -370,7 +354,7 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pdf.cell(190, 5, "E. & O.E.", 0, 1, 'R')
     pdf.ln(2)
 
-    # Bank Details Block
+    # Bank Details Block (Dynamic Data from DB)
     if user['show_bank'] == 'Yes':
         b_name, b_holder, b_acc, b_ifsc = get_bank_details()
         pdf.set_font("Arial", 'B', 9)
@@ -400,8 +384,7 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     sent_doc = await update.message.reply_document(
         document=open(fname, 'rb'), 
-        caption=f"✨ *Kridha Essentials* \n🧾 Invoice #{invoice_no} ({user['type']}) taiyar hai!",
-        reply_markup=get_main_menu_keyboard()
+        caption=f"✨ *Kridha Essentials* \n🧾 Invoice #{invoice_no} ({user['type']}) taiyar hai!"
     )
     
     telegram_file_id = sent_doc.document.file_id
@@ -452,12 +435,11 @@ async def edit_ifsc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ''', (b_name, b_holder, b_acc, ifsc))
     conn.commit()
     conn.close()
-    
-    await update.message.reply_text("✅ Bank details successfully update ho gaye hain!", reply_markup=get_main_menu_keyboard())
+    await update.message.reply_text("✅ Bank details successfully update ho gaye hain! Ab naye bills mein yehi details print honge.")
     context.user_data.clear()
     return ConversationHandler.END
 
-# ==================== HISTORY RECOVERY ENGINE ====================
+# ==================== OTHER COMMAND HANDLERS ====================
 
 async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect('billing_history.db')
@@ -467,7 +449,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not rows:
-        await update.message.reply_text("📭 Abhi tak koi billing history record nahi hui hai.", reply_markup=get_main_menu_keyboard())
+        await update.message.reply_text("📭 Abhi tak koi billing history record nahi hui hai.")
         return
         
     history_msg = "📊 *Kridha Essentials - Invoice History:*\n\n"
@@ -477,7 +459,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(history_msg) > 3500:
             break
             
-    await update.message.reply_text(history_msg, parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
+    await update.message.reply_text(history_msg, parse_mode="Markdown")
 
 async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
@@ -490,99 +472,87 @@ async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         if result and result[0]:
-            await update.message.reply_document(
-                document=result[0], 
-                caption=f"🔄 *History Backup* \n🧾 {result[2]} for {result[1]} (Inv #{inv_no})",
-                reply_markup=get_main_menu_keyboard()
-            )
+            await update.message.reply_document(document=result[0], caption=f"🔄 *History Backup* \n🧾 {result[2]} for {result[1]} (Inv #{inv_no})")
         else:
-            await update.message.reply_text("❌ File database mein nahi mili.", reply_markup=get_main_menu_keyboard())
+            await update.message.reply_text("❌ File database mein nahi mili.")
     except (IndexError, ValueError):
-        await update.message.reply_text("❌ Sahi format use karein, e.g., /get_1", reply_markup=get_main_menu_keyboard())
+        await update.message.reply_text("❌ Sahi format use karein, e.g., /get_1")
 
-def main():
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Process cancel kar diya gaya.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
+async def start_bot():
     TOKEN = "8718587710:AAFrD0Utr2TwRbEeMaAnSKxELWbj-5lRuCI" 
-    PROXY_URL = "http://proxy.server:3128"
     
-    custom_request = HTTPXRequest(proxy_url=PROXY_URL, read_timeout=30, connect_timeout=30)
-    
+    # Render (Free Linux Environment) configuration without PythonAnywhere Proxy
     app = (
         Application.builder()
         .token(TOKEN)
-        .request(custom_request)
         .build()
     )
 
-    # 1. Billing Conversation Handler (Triggered by menu text or command)
+    # 1. Billing Conversation Handler
     billing_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex('^➕ Create Bill$'), start_billing_flow),
-            CommandHandler('start', start_command)
-        ],
+        entry_points=[CommandHandler('start', start)],
         states={
-            CHOOSING_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), bill_type_choice)],
-            BANK_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), bank_details_choice)],
-            SHOW_CUST_GST: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), show_cust_gst_choice)],
-            CUST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), cust_name)],
-            CUST_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), cust_phone)],
-            CUST_GSTIN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), cust_gstin)],
-            CUST_ADDR: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), cust_addr)],
-            ITEM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_name)],
-            ITEM_HSN: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_hsn)],
-            ITEM_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_qty)],
-            ITEM_UNIT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_unit)],
-            ITEM_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_rate)],
-            ITEM_GST: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), item_gst)],
+            CHOOSING_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bill_type_choice)],
+            BANK_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, bank_details_choice)],
+            SHOW_CUST_GST: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_cust_gst_choice)],
+            CUST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, cust_name)],
+            CUST_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cust_phone)],
+            CUST_GSTIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, cust_gstin)],
+            CUST_ADDR: [MessageHandler(filters.TEXT & ~filters.COMMAND, cust_addr)],
+            ITEM_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_name)],
+            ITEM_HSN: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_hsn)],
+            ITEM_QTY: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_qty)],
+            ITEM_UNIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_unit)],
+            ITEM_RATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_rate)],
+            ITEM_GST: [MessageHandler(filters.TEXT & ~filters.COMMAND, item_gst)],
             ADDING_MORE: [
                 MessageHandler(filters.Regex('^\+ Add Another Item$'), item_name),
                 MessageHandler(filters.Regex('^Generate Final Bill$'), generate_bill)
             ],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex('^🛑 Stop Process$'), stop_process),
-            CommandHandler('stop', stop_process)
-        ],
+        fallbacks=[CommandHandler('cancel', cancel)],
     )
 
     # 2. Bank Details Edit Conversation Handler
     bank_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^🏦 Edit Bank$'), edit_bank_start)],
+        entry_points=[CommandHandler('editbank', edit_bank_start)],
         states={
-            EDIT_BANK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), edit_bank_name)],
-            EDIT_ACC_HOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), edit_acc_holder)],
-            EDIT_ACC_NO: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), edit_acc_no)],
-            EDIT_IFSC: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex('^🛑 Stop Process$'), edit_ifsc)],
+            EDIT_BANK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_bank_name)],
+            EDIT_ACC_HOLDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_acc_holder)],
+            EDIT_ACC_NO: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_acc_no)],
+            EDIT_IFSC: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_ifsc)],
         },
-        fallbacks=[
-            MessageHandler(filters.Regex('^🛑 Stop Process$'), stop_process),
-            CommandHandler('stop', stop_process)
-        ]
+        fallbacks=[CommandHandler('cancel', cancel)]
     )
 
-    # Global Handlers
-    app.add_handler(MessageHandler(filters.Regex('^📊 View History$'), show_history))
     app.add_handler(CommandHandler('history', show_history))
     app.add_handler(MessageHandler(filters.Regex('^/get_'), handle_download))
-    app.add_handler(MessageHandler(filters.Regex('^🛑 Stop Process$'), stop_process))
-    app.add_handler(CommandHandler('stop', stop_process))
-    
     app.add_handler(billing_conv)
     app.add_handler(bank_conv)
     
-    print("Bot completely fixed with permanent control board running safely...")
-    app.run_polling()
+    print("Bot completely fixed and up running safely...")
+    
+    # Modern Asynchronous pooling initialization for Render Linux stability
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    while True:
+        await asyncio.sleep(3600)
+
+def main():
+    try:
+        if sys.platform == 'win32':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.run(start_bot())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped cleanly.")
+    except Exception as e:
+        print(f"Error in main loop: {e}")
 
 if __name__ == '__main__':
-    import asyncio
-    try:
-        # Render/Linux par loop handle karne ke liye
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Bot stopped manually.")
-        
+    main()
