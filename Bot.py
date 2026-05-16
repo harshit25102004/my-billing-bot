@@ -573,4 +573,16 @@ def main():
     app.run_polling()
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    try:
+        # Render/Linux par loop handle karne ke liye
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
+        
