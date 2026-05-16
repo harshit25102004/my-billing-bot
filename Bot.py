@@ -1,7 +1,6 @@
- import logging
+import logging
 import os
 import sqlite3
-import asyncio
 import sys
 from datetime import datetime
 from fpdf import FPDF
@@ -14,6 +13,7 @@ from telegram.ext import (
     ConversationHandler, 
     ContextTypes
 )
+from telegram.request import HTTPXRequest
 
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -180,7 +180,7 @@ async def item_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data['type'] == 'GST Invoice':
             await update.message.reply_text("📈 GST % (Kripya sirf number likhein jaise 5, 12, 18):")
             return ITEM_GST
-context.user_data['current_item']['gst'] = 0.0
+        context.user_data['current_item']['gst'] = 0.0
         return await save_item(update, context)
     except ValueError:
         await update.message.reply_text("❌ Kripya sahi price dalein. Price:")
@@ -300,7 +300,7 @@ async def generate_bill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_gst:
             pdf.cell(20, 7, f"{tax:.2f}", 1, 0, 'C')
             pdf.cell(25, 7, f"{total:.2f}", 1, 1, 'C')
-            if base > 0:    
+            if base > 0:
                 tax_rows.append((itm['hsn'], base, tax/2.0, tax/2.0, tax))
         else:
             pdf.cell(45, 7, f"{total:.2f}", 1, 1, 'C')
@@ -482,17 +482,20 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Process cancel kar diya gaya.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-async def start_bot():
+def main():
     TOKEN = "8718587710:AAFrD0Utr2TwRbEeMaAnSKxELWbj-5lRuCI" 
+    PROXY_URL = "http://proxy.server:3128"
     
-    # Render (Free Linux Environment) configuration without PythonAnywhere Proxy
+    # PythonAnywhere Correct Configured HTTPX Proxy
+    custom_request = HTTPXRequest(proxy_url=PROXY_URL, read_timeout=30, connect_timeout=30)
+    
     app = (
         Application.builder()
         .token(TOKEN)
+        .request(custom_request)
         .build()
     )
 
-    # 1. Billing Conversation Handler
     billing_conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -517,7 +520,6 @@ async def start_bot():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
 
-    # 2. Bank Details Edit Conversation Handler
     bank_conv = ConversationHandler(
         entry_points=[CommandHandler('editbank', edit_bank_start)],
         states={
@@ -534,25 +536,8 @@ async def start_bot():
     app.add_handler(billing_conv)
     app.add_handler(bank_conv)
     
-    print("Bot completely fixed and up running safely...")
-    
-    # Modern Asynchronous pooling initialization for Render Linux stability
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    
-    while True:
-        await asyncio.sleep(3600)
-
-def main():
-    try:
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        asyncio.run(start_bot())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot stopped cleanly.")
-    except Exception as e:
-        print(f"Error in main loop: {e}")
+    print("Bot fixed for PythonAnywhere running cleanly...")
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
